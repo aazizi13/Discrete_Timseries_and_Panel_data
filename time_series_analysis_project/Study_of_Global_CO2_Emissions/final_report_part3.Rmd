@@ -1,0 +1,1052 @@
+---
+title: "Study of Global $CO_{2}$ Emissions"
+short: What Keeling missed all these years
+journal: AER
+output: pdf_document
+year: 2022
+vol: 0
+issue: 0
+keywords:
+- Replication
+- Modern Science
+acknowledgements: |
+  The authors would like to thank their instructors from MIDS 271.
+abstract: "In this report, we study the concentrations of CO2 levels in the atmosphere.
+  While early studies suggest that CO2 concentration levels are variable and hard
+  to forecast, we will study datasets collected over years to determine if there are
+  discernable patterns.Studying CO2 levels can help us assess health risks to the
+  populations, wildlife, and ecosystem of different areas, and could also help us
+  determine acitivities that adversely affect these levels."
+header-includes:
+- \usepackage{graphicx}
+- \usepackage{booktabs}
+month: 7
+---
+
+
+```{r setup, message=FALSE,warning=FALSE, echo=FALSE}
+## default to not show code, unless we ask for it.
+knitr::opts_chunk$set(echo=FALSE)
+options(digits = 3, knitr.duplicate.label = "allow")
+
+library(dplyr)
+library(fable)
+library(feasts)
+library(forecast)
+library(lubridate)
+library(stargazer)
+library(tidyr)
+library(tidyverse)
+library(tsibble)
+if(!"imputeTS"%in%rownames(installed.packages())) {install.packages("imputeTS")}
+library(imputeTS)
+if(!"astsa"%in%rownames(installed.packages())) {install.packages("astsa")}
+library(astsa)
+library(patchwork)
+
+```
+
+# Report From the Point of View of 1997
+
+## Introduction.
+
+In this report we attempt to answer the following research question: Can we discover trend or 
+seasonality factors that we can use to forecast global CO2 levels accurately?
+
+Understanding CO2 levels can he helpful in assessing health risks for a population, wildlife or ecosystem in a given area.
+Additionally, we could study CO2 levels in different areas and over different conditions to attempt to find the cause 
+of changes in CO2 levels, potential activities such as burning fossil fuels, deforestation, among others.
+
+It has been widely reported that the variability of CO2 levels make them hard to predict. In this report, we study measurements 
+of CO2 levels in different areas, across years, and show that definitive patterns emerge that 
+allow us to perform forecasts more accurate than previously conducted studies.
+
+## CO2 Data
+
+The CO2 dataset used in this report consists of 468 observations, collected monthly from 1959 to 1997,
+of CO2 concentration expressed in parts per million (p.p.m.) in the 
+preliminary 1997 SIO manometric mole fraction scale. The readings where collected in the 
+Mauna Loa Observatory in Hawaii.
+The measurements were taken with a continuous gas analyzer, consisting of a thermostated cell,
+an optical system, and an electronic amplifier, manufactured by the Applied Physics Corporation.
+C.D. Keeling collected this data to determine whether we could detect patterns in CO2 concentration levels
+from potentially more accurate atmospheric measurements. Keeling was skeptical of previous research 
+that used data collected with chemical measurements of CO2 observations to claim that CO2 levels
+are too variable to forecast, and decided to collect data with state-of-the art 
+atmospheric measurement equipment.
+
+```{r CO2 data, results=FALSE, echo=FALSE}
+summary(co2)
+```
+
+```{r Creating tidy tsibble, message=FALSE, echo=FALSE}
+dates = c()
+years = c()
+months = c()
+month_index = c()
+co2_values = c()
+
+for (i in 1:468)
+{
+  current_date = ymd(as.Date('1959-01-01')) %m+% months(i - 1)
+  year = year(current_date)
+  month = month(current_date)
+  co2_value = co2[i]
+  
+  dates = append(dates, current_date)
+  years = append(years, year)
+  months = append(months, month)
+  month_index = append(month_index, i) 
+  co2_values = append(co2_values, co2_value)
+}
+
+co2_tidy_dataframe = data.frame(date = dates,
+                                year = years,
+                                month = months,
+                                month_index = month_index,
+                                co2_value = co2_values)
+
+
+co2_tsibble = as_tsibble(
+  co2_tidy_dataframe %>% mutate(month = yearmonth(date)),
+  index = month)
+```
+
+```{r Plot EDA graphs for 1997 CO2 data, echo=FALSE}
+par(mfrow=c(2,2))
+
+plot(x = co2_tsibble$date, y = co2_tsibble$co2_value, type ="l", main = 'CO2 Concentration across time')
+
+hist(co2_tsibble$co2_value)
+
+acf(co2_tsibble$co2_value)
+
+pacf(co2_tsibble$co2_value)
+
+```
+We can see that the CO2 values in the dataset seem reasonable, from 313 to 367, and 
+there are no missing values.
+The time series plot shows both a clear upwards trend and a level of seasonality very few
+months in terms of CO2 concentration levels.
+The histogram shows a slight right skew in the CO2 values.
+The ACF plot shows a high correlation for close lags and slow decay over time 
+, similar to an AR process. But there's the oscillating behavior in the graph, 
+corroborating the seasonality seen in the time series plot.
+The PACF plot shows a spike in lag 1, but a sinusoidal pattern with statistical
+significance at larger lags (2, 4, 12, 13, etc.). 
+The initial exploration of the data suggests exploring an AR process, with at least one
+order difference to detrend, and a seasonal component.
+
+
+## Linear Time Trend Model
+
+```{r linear time trend models, echo=TRUE}
+linear_model = co2_tsibble %>%
+  model(trend_model = TSLM(co2_value ~ trend()))
+
+linear_model %>% report()
+
+```
+
+```{r quadratic time trend model, echo=TRUE}
+quadratic_model = co2_tsibble %>%
+  model(trend_model = TSLM(co2_value ~ I(trend()) + I(trend()^2)))
+
+quadratic_model %>% report()
+
+```
+
+```{r comparing residuals model residuals, echo=FALSE, fig.height = 2}
+linear_model_acf <- linear_model %>%
+  augment() %>%
+  ACF(.resid) %>%
+  autoplot() + labs(title = "ACF of linear model")
+
+quadratic_model_acf <- quadratic_model %>%
+  augment() %>%
+  ACF(.resid) %>%
+  autoplot() + labs(title = "ACF of quadratic model")
+
+par(mfrow=c(1,2))
+linear_model_acf +
+quadratic_model_acf
+
+```
+Fitting a linear model on the data and examining the residuals shows that 
+the model is a poor fit for the dataset. There are clear autocorrelations in 
+the ACF plot, with a seasonal pattern.
+The quadratic model is not a significant improvement over the linear model, apart 
+from a slight increase in the adjusted R-square score (0.979 vs 0.969) and smaller 
+residual standard error (2.18 vs 2.62), as we can
+see clear autocorrelations in the residuals in the ACF, still showing a seasonal
+pattern that's not modeled properly.
+
+A logarithmic transformation of the data won't be of too much help in this case,
+because neither the data grows exponentially (the range is 315 to 364), nor the 
+variance significantly changes over time, as we can see from the plot of the CO2
+values over time.
+
+We now explore the use of a polynomial model with seasonal dummy variables.
+
+```{r polynomial time trend with seasonal dummy variables model, echo = TRUE}
+polynomial_model = co2_tsibble %>%
+  model(trend_model = TSLM(co2_value ~ I(trend()^1) + I(trend()^2) + I(trend()^3) + 
+                                       season()))
+
+polynomial_model %>% report()
+```
+
+```{r Analysis of residuals of polynomial model, fig.height = 2}
+polynomial_model %>% gg_tsresiduals()
+```
+
+The polynomial model with a trend degree equal to 3 and seasonal dummy variables improves
+the previous trend models in terms of residual standard errors (0.506 versus 2.62 and 2.18),
+and adjusted R-squared of 0.999. 
+Larger polynomial degrees do not significantly improve these metrics, and all of its
+coefficients are statistically significant.
+The ACF plot shows lower autocorrelations between the residuals than in the 
+linear and quadratic models, but still large enough to state that the residuals do not 
+behave like white noise. In comparison with the previous models, we have successfully modeled 
+the seasonal pattern, and now there's only autocorrelations for low orders in the residuals.
+
+```{r Polynomial model forecasting in 2020, results = FALSE}
+
+# January 1998 is the first datapoint in the new forecast window.
+# So January 2020 will be data point 1 + 12*(2020 - 1998) = 265
+# December 2020 will be 265 + 11 = 276.
+polynomial_forecast = forecast(polynomial_model, h = 276)
+
+polynomial_forecast_2020 = polynomial_forecast[
+  polynomial_forecast$month >= yearmonth(as.Date("2020-01-01")) &
+  polynomial_forecast$month <= yearmonth(as.Date("2020-12-01")),]
+
+polynomial_forecast_2020
+```
+
+```{r Plotting 2020 forecast with polynomial model, echo = FALSE, fig.height = 2}
+autoplot(polynomial_forecast_2020) + 
+labs(
+  title = 'Forecast of CO2 concentration in 2020 using a polynomial trend model with seasonal dummy variables',
+  x = "Time", y = 'CO2 measurement')
+```
+This model suggests an uptrend in CO2 values after 1997. In particular,
+the point estimates for 2020 will be 383 in January 2020 and December 2020, with
+a range from 380 to 387 throughout the year.
+
+## ARIMA time series model
+
+We explore different ARIMA models to predict levels of CO2 concentration.
+From the initial EDA, we can see that there are strong trend and seasonal patterns,
+indicating that we should consider differencing and seasonal adjustments in our ARIMA
+models, along with AR and MA orders.
+
+
+```{r Fitting different ARIMA models for 1997 data, echo = TRUE}
+automated.arima.model.bic<-co2_tsibble %>%
+  model(ARIMA(co2_value ~ 0 + pdq(0:10,0:2,0:10) + PDQ(0:10,0:2,0:10), ic="bic", stepwise=F, greedy=F))
+```
+
+We invoked the ARIMA automated model selection mechanism with the BIC metric
+as the criteria, and obtained the model shown below. 
+As expected, there is a differencing component included in the model,
+to apply detrending to the upward trend of CO2 concentration levels.
+Also, there are seasonal orders for AR, MA and differencing, to account for the 
+sinusoidal behavior that we observed in the time series.
+
+```{r Choosing the ARIMA model for 1997 data, echo = TRUE}
+arima.model.bic<-co2_tsibble %>%
+  model(ARIMA(co2_value ~ pdq(0,1,1) + PDQ(1,1,02), ic="bic", stepwise=F, greedy=F))
+
+arima.model.bic %>% report()
+```
+
+We now examine the residuals to determine if the model is a proper fit.
+
+```{r Examining residuals of our ARIMA model, fig.height=2, echo = FALSE}
+
+arima_acf = arima.model.bic %>%
+  augment() %>%
+  ACF(.resid) %>%
+  autoplot()
+
+arima_pacf = arima.model.bic %>%
+  augment() %>%
+  PACF(.resid) %>%
+  autoplot()
+
+par(mfrow=c(1,2))
+arima_acf + arima_pacf
+
+```
+
+The ACF and PACF plots show that the residuals bahve roughly like white noise, as 
+all but two of the autocorrelations are barely statistically significant. With a 95% confidence,
+we would expect up to 5% of the autocorrelations to be statistically significant to 
+consider the residuals independent.
+
+We have run and passed Ljung-Box tests for lags 1-10, results are not shown, providing further formal 
+evidence that the residuals behave like white noise.
+
+```{r Ljung-Box test for ARIMA model, echo = FALSE, results = FALSE}
+
+arima.model.bic.resid.ts<-arima.model.bic %>%
+  augment() %>%
+  select(.resid) %>%
+  as.ts()
+
+Box.test(arima.model.bic.resid.ts, lag = 1, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 2, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 3, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 4, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 5, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 6, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 7, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 8, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 9, type = "Ljung-Box")
+
+Box.test(arima.model.bic.resid.ts, lag = 10, type = "Ljung-Box")
+
+```
+
+```{r Forecasting in 2022 with the ARIMA model, fig.height=2, echo = FALSE}
+
+arima_forecast = forecast(arima.model.bic, h = 300)
+
+arima_forecast_2022 = arima_forecast[arima_forecast$month >= yearmonth(as.Date("2022-01-01")),]
+
+autoplot(arima_forecast_2022) +
+  labs(
+    title = 'Forecast of CO2 concentration in 2022',
+    x = "Time", y = 'CO2 measurement')
+
+```
+We can see that the forecast for year 2022 using the ARIMA model produces 
+a point estimate of 402 for January 2022 and 403 for December 2022, and estimates
+as low as 400 and as high as 406 throughout the year.
+In comparison with the linear model estimated in a previous section, which shows 
+a stagnant estimate around 2020, the ARIMA model
+seems to produce a prediction that follows the consistent upward trend of CO2 levels
+seen in previous years.
+
+## Forecasting Atmospheric CO2 Growth
+
+We will use our ARIMA model to forecast different levels of CO2 concentration.
+
+```{r Forecasting 420 ppm concentration levels with the ARIMA model, results=FALSE}
+
+arima_forecast = forecast(arima.model.bic, h = 1500)
+
+arima_forecast_with_pi = arima_forecast %>%
+  hilo() %>%
+  unpack_hilo(cols = c(`80%`,`95%`))
+
+arima_forecast_above_420_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$`95%_lower` <= 420 &
+  arima_forecast_with_pi$`95%_upper` >= 420,]
+
+arima_forecast_above_420_ppm
+
+arima_forecast_estimate_above_420_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$.mean >= 420 ,]
+
+arima_forecast_estimate_above_420_ppm
+
+arima_forecast_estimate_below_420_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$.mean < 420 
+  & arima_forecast_with_pi$month > yearmonth(as.Date("2031-05-01")),]
+
+arima_forecast_estimate_below_420_ppm
+
+arima_forecast_below_420_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$`95%_upper` < 420 
+  & arima_forecast_with_pi$month > yearmonth(as.Date("2020-05-01")),]
+
+arima_forecast_below_420_ppm
+
+arima_forecast_2020_2022 = arima_forecast[
+  arima_forecast$month >= yearmonth(as.Date("2020-01-01")) &
+  arima_forecast$month <= yearmonth(as.Date("2022-12-01")),]
+```
+Our model predicts that CO2 levels might reach 420 ppm for the first time
+, with a 95% prediction interval, in May 2020. The upper level of the 
+95% prediction interval drops below 420 ppm for the last time in October 2022.
+The model predicts that the estimate will reach 420 for the first time in May 2031, and
+go below 420 for the last time in October 2034.
+
+
+```{r Forecasting 500 ppm concentration levels with the ARIMA model, results = FALSE}
+
+arima_forecast = forecast(arima.model.bic, h = 1500)
+
+arima_forecast_with_pi = arima_forecast %>%
+  hilo() %>%
+  unpack_hilo(cols = c(`80%`,`95%`))
+
+arima_forecast_above_500_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$`95%_lower` <= 500 &
+  arima_forecast_with_pi$`95%_upper` >= 500,]
+
+arima_forecast_above_500_ppm
+
+arima_forecast_estimate_above_500_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$.mean >= 500 ,]
+
+arima_forecast_estimate_above_500_ppm
+
+arima_forecast_estimate_below_500_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$.mean < 500 
+  & arima_forecast_with_pi$month > yearmonth(as.Date("2051-03-01")),]
+
+arima_forecast_estimate_below_500_ppm
+
+arima_forecast_below_500_ppm = arima_forecast_with_pi[
+  arima_forecast_with_pi$`95%_upper` < 500 
+  & arima_forecast_with_pi$month > yearmonth(as.Date("2051-03-01")),]
+
+arima_forecast_below_500_ppm
+
+arima_forecast_2050_2052 = arima_forecast[
+  arima_forecast$month >= yearmonth(as.Date("2050-01-01")) &
+  arima_forecast$month <= yearmonth(as.Date("2052-12-01")),]
+
+```
+
+Below is an exploration of when CO2 levels might reach 420 ppm and 500 ppm.
+We have zoomed into the forecast of 2020-2022 and 2050-2052, which is where 
+the 95% prediction intervals include and exclude the 420 and 500 ppm levels,
+respectively. We can see the estimates reaching these levels in the forecast until 2100
+plot.
+
+```{r Plotting Forecasting of 420 and 500 ppm concentration levels with the ARIMA model, fig.height = 4, fig.width = 4, results = FALSE}
+
+par(mfrow=c(1,3))
+
+arima_until_2100_plot = autoplot(arima_forecast) +
+  labs(
+    title = 'Forecast until 2100',
+    x = "Time", y = 'CO2 measurement')
+
+arima_2020_2022_plot = autoplot(arima_forecast_2020_2022) +
+  labs(
+    title = 'Forecast from 2020 to 2022',
+    x = "Time", y = 'CO2 measurement')
+
+arima_2050_2052_plot = autoplot(arima_forecast_2050_2052) +
+  labs(
+    title = 'Forecast from 2050 to 2052',
+    x = "Time", y = 'CO2 measurement')
+
+arima_until_2100_plot /
+arima_2020_2022_plot / arima_2050_2052_plot
+
+```
+
+Our model predicts that CO2 levels might reach 420 ppm for the first time
+, with a 95% prediction interval, in May 2020. The upper level of the 
+95% prediction interval drops below 420 ppm for the last time in October 2022.
+The model predicts that the estimate will reach 420 for the first time in May 2031, and
+go below 420 for the last time in October 2034.
+
+
+Our model predicts that CO2 levels might reach 500 ppm for the first time
+, with a 95% prediction interval, in March 2051. The upper level of the 
+95% prediction interval drops below 500 ppm for the last time in August 2052.
+The model predicts that the estimate will reach 500 ppm for the first time in April 2083, and
+go below 500 ppm for the last time in October 2086.
+
+We now produce forecasts of concentration levels far into the future, for the 
+year 2100.
+
+```{r Forecasting CO2 growth with the ARIMA model, results = FALSE}
+
+arima_forecast = forecast(arima.model.bic, h = 1500)
+
+arima_forecast_2100 = arima_forecast[
+  arima_forecast$month >= yearmonth(as.Date("2100-01-01")) &
+  arima_forecast$month <= yearmonth(as.Date("2100-12-01")),]
+
+arima_forecast_2100
+
+arima_forecast_until_2100_plot = autoplot(arima_forecast) +
+  labs(
+    title = 'Forecast of CO2 concentration until 2100',
+    x = "Time", y = 'CO2 measurement')
+```
+
+```{r Plotting Forecasting CO2 growth with the ARIMA model, fig.height = 2}
+
+autoplot(arima_forecast_2100) +
+  labs(
+    title = 'Forecast of CO2 concentration in 2100',
+    x = "Time", y = 'CO2 measurement')
+
+```
+
+The CO2 levels predicted by the ARIMA model in 2100 range from 521 to 527, January and December 
+being both 524 ppm.
+It's important to note that that these predictions are so far into the future, and our model
+has lags of order less or equal to two months, making it unlikely that the predictions of CO2 levels
+one hundred years away will be highly accurate. We could be more confident in our model either by forecasting 
+periods closer to 1997 or evaluating the model as more data becomes available throughout the 
+years.
+
+
+
+# Report from the Point of View of the Present
+
+In this part of the project, we will be using CO2 data that is readily available in NOAA/GML to answer the question of whether there are any trends or seasonality factors that we can use to forecast global CO2 levels accurately. NOAA/GLM uses state of the art technology to analyze CO2 and continuously improving. In April of 2019, a new CO2 analyzer was installed at Mauna Loa that uses a technique called Cavity Ring-Down Spectroscopy (CRDS). 
+
+We have acquired the full data all the way from 1974 to current day. We will, however, only use the data after 1998 to current day. First, we will perform a full EDA on the data set after 1998 to current date. Then we will be compare the realized CO2 data to the forecasted CO2 level.
+
+The weekly data that we pulled from the website included 2511 observation with 9 variables. We got rid of the columns that we did not need for this analysis and extracted a subset of the data after 1998 that left us with 1279 observations. We noticed that about 4 weekly values had a nonsensical value of "-1000," so we decided to get rid of those and aggregate the data by month. We then casted the dataframe to a tsibble.  
+
+```{r, echo = FALSE}
+#pulling the full data
+data <- read.table(url("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_weekly_mlo.txt"),
+                          header = T,
+                          col.names = c("year", "month","day","decimal",
+                                        "co2_value",
+                                        "ndays", "one.year.ago", "ten.years.ago", 
+                                        "increase since 1800"))
+
+#getting rid of the columns that we don't need. 
+data <- subset(data, select = -c(decimal, ndays,
+                                               one.year.ago,ten.years.ago,
+                                               increase.since.1800))
+
+#getting rid of row numbers
+row.names(data) <- NULL
+
+#creating a time_index column
+co2_full <- data %>% 
+  mutate(time_index = make_datetime(year=year, month = month, day = day))
+
+#casting the data to tsibble
+co2_full <- as_tsibble(co2_full, index = time_index, regular = F)
+
+#some rows have nonsensical values of -1000 for co2_value. 
+#getting rid of those values
+co2_full <- subset(co2_full, co2_value > 0)
+
+#aggratating the data on a monthly bases 
+co2_full <- co2_full %>% 
+  index_by(month = yearmonth(time_index)) %>%
+summarise(
+co2_value = mean(co2_value, na.rm = TRUE)
+)
+
+##################       subsetting the data after 1997         ################
+co2_present <- subset(data, year > 1997)
+
+#getting rid of row numbers
+row.names(co2_present) <- NULL
+
+#creating a time_index column
+co2_present <- co2_present %>% 
+  mutate(time_index = make_datetime(year=year, month = month, day = day))
+
+#casting the data to tsibble
+co2_present <- as_tsibble(co2_present, index = time_index, regular = F)
+
+#some rows have nonsensical values of -1000 for co2_value. 
+#getting rid of those values
+co2_present <- subset(co2_present, co2_value > 0)
+
+#aggratating the data on a monthly bases 
+co2_present <- co2_present %>% 
+  index_by(month = yearmonth(time_index)) %>%
+summarise(
+co2_value = mean(co2_value, na.rm = TRUE)
+)
+
+#head(co2_present)
+```
+
+```{r Plot EDA graphs for data after 1998, echo = FALSE}
+co2_full_plot <- co2_full %>%
+  ggplot() +
+  geom_line(aes(x = month,
+                 y = co2_value)) + 
+  labs(
+    title = 'CO2 Concentration for entire data',
+    x = "Time", y = 'CO2 measurement')
+
+
+
+co2_present_plot <- co2_present %>%
+  ggplot() +
+  geom_line(aes(x = month,
+                 y = co2_value)) + 
+  labs(
+    title = 'CO2 Concentration after 1998',
+    x = "Time", y = 'CO2 measurement')
+
+gridExtra::grid.arrange(co2_full_plot,co2_present_plot, nrow = 1 )
+```
+
+```{r, echo = FALSE}
+par(mfrow=c(2,2))
+hist(co2_present$co2_value)
+
+acf(co2_present$co2_value)
+
+pacf(co2_present$co2_value)
+```
+As we can see in the graphs, the CO2 measurements are still showing a upward trend with a seasonal pattern for the years after 1998. For the data after 1998,there are no missing values. The histogram does not really tell us much. The ACF plot shows a slow decay with some oscillations. The PACF graphs shows a spike in lag 1 as expected but then a sinusoidal pattern with statistical significance at different lags. 
+
+We will, now, use the 4 generated models to compare their forecast to the realized CO2 data. 
+
+First let's look at the linear forecast using the model that was generated using the data until 1997. As we can see in graph, the model is underestimating the realized CO2. The realized CO2 in year 2022 is around 420, where the linear model forecasts it to be around in a range between 393-397.  
+
+The polynomial model appears to flatten after 2015, and it is underestimating the realized CO2. 
+The quadratic model appears to be performing very well. The forecast seems to be following the available realized CO2 quite closely. 
+Looking at the forecast made by the ARIMA model generated, we can see that ARIMA model forecast is much better than both the linear model and the polynomial model forecasts. The ARIMA model seems to be more confident in its forecast closer to 1997, but as the years pass by, the forecast's confidence interval widens. Comparing the model forecast to the realized CO2 values, we can see the realized CO2 rises much sharper than the model forecasts. The wide confidence interval towards the later years of the forecast tries to capture this, however, the realized CO2 towards the later years lie slightly outside the confidence interval. The quadratic model appears to be outperforming the ARIMA model. 
+The ARIMA model had predicted that CO2 levels might reach 420 ppm for the first time in May 2020 with a confidence interval of 95%. The realized CO2 first hit 420 ppm in April 2022. The model seems to have performed relatively well in predicting when 420 ppm will be reached. 
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+linear_forecast = forecast(linear_model, h = 290)
+
+linear_plot <- autoplot(linear_forecast) + 
+labs(
+  title = 'Forecast vs real linear mod',
+  x = "Time", y = 'CO2 measurement') + theme(legend.position="none") + autolayer(co2_present)
+
+polynomial_forecast = forecast(polynomial_model, h = 290)
+
+polynomial_plot <- autoplot(polynomial_forecast) + 
+labs(
+  title = 'Forecast vs real polynomial mod',
+  x = "Time", y = 'CO2 measurement') + theme(legend.position="none") + autolayer(co2_present)
+
+
+quadratic_forecast = forecast(quadratic_model, h = 290)
+
+quadratic_plot <- autoplot(quadratic_forecast) + 
+labs(
+  title = 'Forecast vs real quadratic model',
+  x = "Time", y = 'CO2 measurement') + theme(legend.position="none") +  autolayer(co2_present)
+
+
+arima_forecast = forecast(arima.model.bic, h = 295)
+
+arima_forecast_2022 = arima_forecast[arima_forecast$month >= yearmonth(as.Date("2022-06-01")),]
+
+arima_plot <- autoplot(arima_forecast) +
+  labs(
+    title = 'Forecast vs real ARIMA Model',
+    x = "Time", y = 'CO2 measurement') + theme(legend.position="none") +
+  autolayer(co2_present)
+
+gridExtra::grid.arrange(linear_plot,polynomial_plot,quadratic_plot,arima_plot, nrow = 2 )
+
+```
+
+Next let's look at the accuracy of the four models. As expected, the root mean squared error for the the ARIMA model is lower than both the linear model as well as the polynomial model, indicating that ARIMA model did a better job at predicting CO2 levels. As for the linear model, it appears to be performing better than the polynomial model. 
+Interestingly, comparing the quadratic model to the ARIMA model, we get a better fit with a RMSE of 2.28 for quadratic model and 7.91 for ARIMA model. This indicates that our ARIMA model has more room to improve. In the next section we will try to improve ARIMA model. 
+
+```{r, echo=F}
+linear_accuracy <- accuracy(linear_forecast, co2_present)
+linear_dataframe <- data.frame(model_type = "linear", linear_accuracy)
+polynomial_accuracy <- accuracy(polynomial_forecast, co2_present)
+polynomial_dataframe <- data.frame(model_type = "Polynomial", polynomial_accuracy)
+arima_accuracy  <- accuracy(arima_forecast, co2_present)
+arima_dataframe <- data.frame(model_type = "ARIMA", arima_accuracy)
+quadratic_accuracy <- accuracy(quadratic_forecast, co2_present)
+quadratic_dataframe <- data.frame(model_type = "quadratic", quadratic_accuracy)
+
+data_frame1 <- rbind(linear_dataframe, polynomial_dataframe, arima_dataframe, quadratic_dataframe)
+
+data_frame1 <- subset(data_frame1, select = -c(.model, .type))
+data_frame1
+```
+
+## (4 points) Task 5b: Train best models on present data
+
+### Repull the data to get weekly data
+```{r, warning=FALSE, echo = FALSE, fig.height = 2}
+co2_present <- read.table(url("https://gml.noaa.gov/webdata/ccgg/trends/co2/co2_weekly_mlo.txt"),
+                          header = T,
+                          col.names = c("year", "month","day","decimal","co2_value",
+                                        "ndays", "one.year.ago", "ten.years.ago", "increase since 1800"))
+
+co2_present <- subset(co2_present, select = -c(decimal, ndays,
+                                               one.year.ago,ten.years.ago,
+                                               increase.since.1800))
+row.names(co2_present) <- NULL
+
+co2_present <- co2_present %>% 
+  mutate(time_index = make_datetime(year=year, month = month, day = day)) %>%
+    mutate(yearweek = yearweek(time_index)) %>%
+      mutate(
+          date = as.Date(yearweek, "%Y%U%u"),
+          week = week(yearweek),
+          quarter = quarter(yearweek),
+          jan = ifelse(month==1, 1, 0),
+          feb = ifelse(month==2, 1, 0),
+          mar = ifelse(month==3, 1, 0),
+          apr = ifelse(month==4, 1, 0),
+          may = ifelse(month==5, 1, 0),
+          jun = ifelse(month==6, 1, 0),
+          jul = ifelse(month==7, 1, 0),
+          aug = ifelse(month==8, 1, 0),
+          sep = ifelse(month==9, 1, 0),
+          oct = ifelse(month==10, 1, 0),
+          nov = ifelse(month==11, 1, 0),
+          dec = ifelse(month==12, 1, 0)
+      )
+
+co2_present <- as_tsibble(co2_present, index = date, regular = TRUE)
+co2_present <- subset(co2_present, co2_value > 0) %>% fill_gaps(.full=TRUE)
+
+co2_present_full = na_interpolation(co2_present)
+
+co2_present_full <- as_tsibble(co2_present_full, index = date, regular = TRUE)
+
+plot1 = co2_present_full%>%
+  ggplot() +
+  geom_point(aes(x = date,
+                 y = co2_value)) +
+  labs(
+    title = 'CO2 Concentration across time',
+    x = "Time", y = 'CO2 measurement')
+
+plot2 = subset(co2_present_full, year==2021)%>%
+  ggplot() +
+  geom_point(aes(x = date,
+                 y = co2_value)) +
+  labs(
+    title = '2021 CO2 Concentration across time',
+    x = "Time", y = 'CO2 measurement')
+
+plot1 | plot2
+```
+
+* Graphically, the weekly CO2 data follows a monthly seasonal trend. 
+
+### seasonally adjust the data
+```{r , echo=TRUE}
+co2_sa = co2_present_full
+sea_mod = lm(co2_value ~ feb + mar + apr + may + jun + jul + aug + sep + oct + nov + dec, co2_present_full)
+co2_sa$co2_value_sa = sea_mod$residuals
+```
+
+
+```{r , fig.height = 2}
+plot3 = co2_sa %>%
+  ggplot() +
+  geom_point(aes(x = date,
+                 y = co2_value_sa)) +
+  labs(
+    title = 'Seasonally Adjusted Data',
+    x = "Time", y = 'Value')
+
+plot4 = subset(co2_sa, year==2021) %>%
+  ggplot() +
+  geom_point(aes(x = date,
+                 y = co2_value_sa)) +
+  labs(
+    title = '2021 Seasonally Adjusted',
+    x = "Time", y = 'Value')
+plot3 | plot4
+```
+
+* Once we control for monthly seasonality using month dummy variables, we have only time trend left. 
+
+### manually select best arima for seasonally adjusted data
+```{r, echo=TRUE}
+data <- co2_sa %>%
+  mutate(diff = difference(co2_value_sa)) 
+data <- na.omit(data)
+data <- as_tsibble(data, index = date, regular = TRUE)
+```
+
+
+```{r, echo=FALSE, fig.height = 2}
+plot1 <- data %>%
+  ggplot() +
+  geom_point(aes(x = date,
+                 y = diff))
+
+plot2 <-data %>%
+  ACF(diff, type="correlation"
+ ) %>%
+  autoplot()
+
+plot3 <-data %>%
+  ACF(diff, type="partial") %>%
+  autoplot()
+
+plot1
+plot2 | plot3
+```
+
+* After differencing the data, it looks like there is still significant lag at 30. Therefore we will include a lag of 26 for the ARIMA model, because 26 weeks are a half of year.
+
+# manually select the best polynomial time trend model for seasonally adjusted data
+```{r, warning=FALSE, message=FALSE, echo=TRUE}
+linear_models = co2_sa %>%
+  model(model_poly1 = TSLM(co2_value_sa ~ trend()),
+        model_poly2 = TSLM(co2_value_sa ~ I(trend()) + I(trend()^2)),
+        model_poly3 = TSLM(co2_value_sa ~ I(trend()^1) + I(trend()^2) + I(trend()^3))
+        )
+
+linear_models %>% report
+```
+* Polynomial with order of 2 has the lowest **non-negative** BIC score, therefore we will use it as our polynomial time-trend model to seasonal adjusted series.
+
+### splitting seasonal data into test and training set
+```{r, echo=TRUE}
+# split seasonal adjusted data
+dat <- co2_sa %>% select(c('date','co2_value_sa'))
+
+test.size<-104 # last two years 2*52 = 104 weeks
+
+#split training and test
+dat.train<-dat %>%
+  slice(1:(n()-test.size))
+
+dat.test<-dat %>%
+  slice((n()-test.size+1):n())
+```
+
+### in sample bic comparisons
+```{r, warning=FALSE, echo=TRUE}
+model.comp<-dat.train %>%
+  model(arima.bic=ARIMA(co2_value_sa ~ 1 + pdq(0:30,0:2,0:30) + PDQ(0,0,0), ic="bic", stepwise=F, greedy=F),
+        arima.manual=ARIMA(co2_value_sa ~ 1 + pdq(26,1,1) + PDQ(0,0,0), ic="bic", stepwise=F, greedy=F),
+        poly.manual = TSLM(co2_value_sa ~ I(trend()) + I(trend()^2))
+        )
+
+model.comp %>% report
+```
+
+* In terms of BIC score, polynomial time trend data actually performs significantly better on in sample data compare to both automatically selected, and manually selected ARIMA data. 
+
+### in sample residual comparisons
+```{r, echo=FALSE, fig.height = 2}
+model.comp %>%
+  augment() %>%
+  ACF(.resid) %>%
+  autoplot()
+
+paste("arima.bic Ljung-Box test")
+model.comp %>%
+  augment() %>%
+  filter(.model=="arima.bic") %>%
+  select(.resid) %>%
+  as.ts() %>%
+  Box.test(., lag = 10, type = "Ljung-Box")
+
+paste("arima.manual Ljung-Box test")
+model.comp %>%
+  augment() %>%
+  filter(.model=="arima.manual") %>%
+  select(.resid) %>%
+  as.ts() %>%
+  Box.test(., lag = 10, type = "Ljung-Box")
+
+paste("poly.manual Ljung-Box test")
+model.comp %>%
+  augment() %>%
+  filter(.model=="poly.manual") %>%
+  select(.resid) %>%
+  as.ts() %>%
+  Box.test(., lag = 10, type = "Ljung-Box")
+```
+
+* In contrast when looking at in-sample residuals and each model's Ljung-Box test, only the residual from manually selected ARIMA appears to be stationary.
+
+### test sample forecast comparisons
+
+```{r, warning=FALSE, fig.height = 2}
+model.forecasts<-forecast(model.comp, h=test.size)
+
+autoplot(model.forecasts) + 
+labs(
+  title = '2 year forecast of seasonally adjusted co2 value',
+  x = "Time", y = 'Value') + theme(legend.position="right") + autolayer(dat.test) 
+  #+facet_wrap(~.model, ncol=1, nrow=3)
+
+accuracy(model.forecasts, dat.test)
+```
+* Now looking at forecast on the test samples, 
+  + Polynomial tend to underestimate the co2 value in the earlier weeks, but it gets better at later weeks. This suggest as time go further out, it may start overestimating values. 
+  + While BIC-selected and manually-selected Arima shows similar trend, the manually-selected model better captures the fluctuation within the data due to using more lagging terms. However, the effect of lagging term will diminish overtime. Therefore for longer term forecast manually-selected ARIMA may not do a better job than BIC-selected ARIMA. 
+
+### manually select best arima for non-seasonally adjusted data
+```{r, echo=TRUE}
+data <- co2_present_full %>%
+  mutate(diff = difference(co2_value)) 
+data <- na.omit(data)
+data <- as_tsibble(data, index = date, regular = TRUE)
+```
+
+
+```{r, echo=FALSE, fig.height = 2}
+plot1 <- data %>%
+  ggplot() +
+  geom_point(aes(x = date,
+                 y = diff))
+
+plot2 <-data %>%
+  ACF(diff, type="correlation"
+ ) %>%
+  autoplot()
+
+plot3 <-data %>%
+  ACF(diff, type="partial") %>%
+  autoplot()
+
+plot1
+plot2 | plot3
+```
+* Even after differencing we notice a strong seasonality in the plots. It's not clear how many lag terms we should use to account for seasonality, but we can potentially use 26 lag terms for AR because 26 weeks is 6 months of data, and let ARIMA function automatically to select for seasonality adjustment. 
+
+### splitting non-seasonal data into test and training set
+```{r, echo=TRUE}
+# split seasonal adjusted data
+dat <- co2_present_full %>% select(c('date','co2_value'))
+
+test.size<-104 # last two years 2*52 = 104 weeks
+
+#split training and test
+dat.train<-dat %>%
+  slice(1:(n()-test.size))
+
+dat.test<-dat %>%
+  slice((n()-test.size+1):n())
+```
+
+### in sample bic comparisons
+```{r, warning=FALSE, echo=TRUE}
+model.comp<-dat.train %>%
+  model(arima.bic=ARIMA(co2_value ~ 1 + pdq(0:30,0:2,0:30) + PDQ(0:30,0:2,0:30), ic="bic", stepwise=F, greedy=F),
+        arima.manual=ARIMA(co2_value ~ 1 + pdq(26,1,1) + PDQ(0:30,0:2,0:30), ic="bic", stepwise=F, greedy=F)
+        )
+
+model.comp %>% report
+```
+
+* In terms of BIC score, manually-selected ARIMA data actually performs a lot better on in sample data compare to BIC-selected ARIMA, but this could also be due to overfitting. 
+
+### in sample residual comparisons
+
+```{r, echo=FALSE, fig.height = 2}
+model.comp %>%
+  augment() %>%
+  ACF(.resid) %>%
+  autoplot()
+
+paste("arima.bic Ljung-Box test")
+model.comp %>%
+  augment() %>%
+  filter(.model=="arima.bic") %>%
+  select(.resid) %>%
+  as.ts() %>%
+  Box.test(., lag = 10, type = "Ljung-Box")
+
+paste("arima.manual Ljung-Box test")
+model.comp %>%
+  augment() %>%
+  filter(.model=="arima.manual") %>%
+  select(.resid) %>%
+  as.ts() %>%
+  Box.test(., lag = 10, type = "Ljung-Box")
+```
+
+* In contrast when looking at in-sample residuals and each model's Ljung-Box test, only the residual from BIC-selected ARIMA appears to be stationary, while there is still some seasonality left for the manually-selected ARIMA.
+
+### test sample forecast comparisons
+
+```{r, warning=FALSE, fig.height = 2}
+model.forecasts<-forecast(model.comp, h=test.size)
+
+autoplot(model.forecasts) + 
+labs(
+  title = '2 year forecast of seasonally adjusted co2 value',
+  x = "Time", y = 'Value') + theme(legend.position="right") + autolayer(dat.test) 
+  #+facet_wrap(~.model, ncol=1, nrow=3)
+
+accuracy(model.forecasts, dat.test)
+```
+* Now looking at forecast on the test samples, 
+  + manually selected model better captures the fluctuation within the data due to using more lagging terms. Furthermore, it has a much narrower confidence interval, which means we can have more confidence in its result.
+
+## (3 points) Task Part 6b: How bad could it get?
+
+### train the best ARIMA model on the whole dataset
+```{r, echo=TRUE}
+dat <- co2_present_full %>% select(c('date','co2_value'))
+arima.manual<-dat %>%
+  model(arima.manual=ARIMA(co2_value ~ 1 + pdq(26,1,1) + PDQ(0:30,0:2,0:30), ic="bic", stepwise=F, greedy=F))
+```
+
+### forecast with the best model
+```{r Forecasting 2122 with the best model, fig.height = 2}
+weeks <- 5214 # 2122 is 100 years from 2022 = 52.14* 102 = 5214 weeks
+
+arima_forecast = forecast(arima.manual, h = weeks)
+
+autoplot(arima_forecast) +
+  labs(
+    title = 'Forecast of CO2 concentration until 2122',
+    x = "Time", y = 'CO2 measurement') + 
+  geom_hline(yintercept = 420, color='red') + 
+  geom_hline(yintercept = 500, color='red')
+```
+
+### calculate first and last time for 420
+```{r Forecast first and last time of 420 ppm, results=FALSE}
+arima_forecast_with_pi = arima_forecast %>%
+  hilo() %>%
+  unpack_hilo(cols = c(`80%`,`95%`))
+
+first_time_95 = arima_forecast_with_pi[arima_forecast_with_pi$`95%_upper` >= 420,]
+last_time_95 = arima_forecast_with_pi[arima_forecast_with_pi$`95%_lower` <= 420,]
+
+first_time_mean = arima_forecast_with_pi[arima_forecast_with_pi$.mean >= 420,]
+last_time_mean = arima_forecast_with_pi[arima_forecast_with_pi$.mean <= 420,]
+min(first_time_95$date)
+max(last_time_95$date)
+min(first_time_mean$date)
+max(last_time_mean$date)
+```
+
+* Using 95% confidence interval the first time we reach 420 is during the week of 2022-07-04. The last time we reach 420 is during the week of 2025-12-22
+* Using mean estimation the first time we reach 420 is during the week of 2023-01-30. The last time we reach 420 is during the week of 2023-12-04
+
+### calculate first and last time for 500
+```{r Forecast first and last time of 500 ppm, results=FALSE}
+first_time_95 = arima_forecast_with_pi[arima_forecast_with_pi$`95%_upper` >= 500,]
+last_time_95 = arima_forecast_with_pi[arima_forecast_with_pi$`95%_lower` <= 500,]
+
+first_time_mean = arima_forecast_with_pi[arima_forecast_with_pi$.mean >= 500,]
+last_time_mean = arima_forecast_with_pi[arima_forecast_with_pi$.mean <= 500,]
+min(first_time_95$date)
+max(last_time_95$date)
+min(first_time_mean$date)
+max(last_time_mean$date)
+```
+
+* Using 95% confidence interval the first time we reach 500 ppm is during the week of 2062-07-31. The last time we reach 500 ppm is during the week of 2071-01-26
+* Using mean estimation the first time we reach 500 ppm is during the week of 2066-09-13, which is also the last time we reach 500 ppm, because the trend is linearly upward. 
+
+### Generate a prediction for atmospheric CO2 levels in the year 2122
+```{r}
+tail(arima_forecast_with_pi, 1)
+```
+
+* At June 2122, our best model predicts that our mean CO2 concentration is 603 with 95% upper equals 614, and 95 lower equals 592. With such a small confidence interval, we do have some confidence that CO2 levels can be significantly dangerous by 2122.
+* However, the time series model assumes all important and relevant factors stays the same as they did historically when we first collect the data. We have no confidence that this assumption will stay valid in the future.  
+
+## Conclusion
+Based on our forecasts, the CO2 level will quickly enter a territory that makes living on earth difficult for humans. We urge everyone to take actions that will help reduce CO2 emissions.

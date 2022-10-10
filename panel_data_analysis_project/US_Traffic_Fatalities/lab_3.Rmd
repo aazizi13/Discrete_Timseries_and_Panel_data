@@ -1,0 +1,778 @@
+---
+title: 'Lab 3: Panel Models'
+subtitle: 'US Traffic Fatalities: 1980 - 2004'
+output: 
+  bookdown::pdf_document2: default
+---
+
+```{r, echo=FALSE, message=FALSE,warning=FALSE}
+packages <- c("tidyverse", "magrittr", "dplyr", "ggplot2" ,
+              "gridExtra", "maps", "mapproj", "viridis",
+              "GGally","plm","knitr","usmap","lattice", 
+              "lubridate", "car")
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
+
+knitr::opts_chunk$set(eval = TRUE, echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+# U.S. traffic fatalities: 1980-2004
+
+In this lab, we are asking you to answer the following **causal** question: 
+
+> **"Do changes in traffic laws affect traffic fatalities?"**  
+
+To answer this question, please complete the tasks specified below using the data provided in `data/driving.Rdata`. This data includes 25 years of data that cover changes in various state drunk driving, seat belt, and speed limit laws. 
+
+Specifically, this data set contains data for the 48 continental U.S. states from 1980 through 2004. Various driving laws are indicated in the data set, such as the alcohol level at which drivers are considered legally intoxicated. There are also indicators for “per se” laws—where licenses can be revoked without a trial—and seat belt laws. A few economics and demographic variables are also included. The description of the each of the variables in the dataset is also provided in the dataset. 
+
+# (30 points, total) Build and Describe the Data 
+
+1. (5 points) Load the data and produce useful features. Specifically: 
+    - Produce a new variable, called `speed_limit` that re-encodes the data that is in `sl55`, `sl65`, `sl70`, `sl75`, and `slnone`; 
+    - Produce a new variable, called `year_of_observation` that re-encodes the data that is in `d80`, `d81`, ... , `d04`. 
+    - Produce a new variable for each of the other variables that are one-hot encoded (i.e. `bac*` variable series). 
+    - Rename these variables to sensible names that are legible to a reader of your analysis. For example, the dependent variable as provided is called, `totfatrte`. Pick something more sensible, like, `total_fatalities_rate`. There are few enough of these variables to change, that you should change them for all the variables in the data. (You will thank yourself later.)
+2. (5 points) Provide a description of the basic structure of the dataset. What is this data? How, where, and when is it collected? Is the data generated through a survey or some other method? Is the data that is presented a sample from the population, or is it a *census* that represents the entire population? Minimally, this should include:
+    - How is the our dependent variable of interest `total_fatalities_rate` defined? 
+3. (20 points) Conduct a very thorough EDA, which should include both graphical and tabular techniques, on the dataset, including both the dependent variable `total_fatalities_rate` and the potential explanatory variables. Minimally, this should include: 
+    - How is the our dependent variable of interest `total_fatalities_rate` defined? 
+    - What is the average of `total_fatalities_rate` in each of the years in the time period covered in this dataset? 
+
+As with every EDA this semester, the goal of this EDA is not to document your own process of discovery -- save that for an exploration notebook -- but instead it is to bring a reader that is new to the data to a full understanding of the important features of your data as quickly as possible. In order to do this, your EDA should include a detailed, orderly narrative description of what you want your reader to know. Do not include any output -- tables, plots, or statistics -- that you do not intend to write about.
+
+
+```{r}
+#loading the file 
+load(file="./data/driving.RData")
+print("data dimension")
+dim(data)
+
+print("column names")
+colnames(data)
+
+print("na.values")
+sum(is.na(data))
+```
+
+```{r}
+table(data$year)
+table(data$state)
+
+```
+## Overview 
+
+This data set is compiled from the Fatality Analysis Reporting System (FARS) by NHTSA7. FARS gathers all data on all traffic crashes that results in a death of a nonmotorsit or the vehicle occupant. All data is gathered by state employees using a standard format for comparability across states. 
+
+The data set has 1200 observations across 56 columns for the years 1980 to 2004 for 48 continental states. The data has a panel structure, where each state has 25 observations in time for different variables. The data set has no missing values. Point to notes is Alaska, Hawaii, and district of Columbia is missing from the data set. This makes sense since Alaska and Hawaii are not continental states and District of Columbia is not a state. The rest of the variables can be summarized as follows.
+
+-***Speed limit laws:*** Variables sl55, sl65, sl70, sl75, slnone, sl70plus. These indicate speeds limits of 55, 65, 70, 75 mph, no speed limit and any speed over 70mph.
+
+-***DUI Laws:*** variables minage, zerotol, bac10, bac08, Per se law. These indicate the minimum drinking age, zero tolerance law, blood alcohol level of 0.10 and 0.08. Per Se law gives DMV the right to revoke license of individuals who refuse to take the breath test, has 0.08% blood alcohol level or is a minor with blood alcohol level of 0.01%
+
+-***Seat Belt Laws:*** Variables seatbelt, sbprim, sbsecon. These have values 0, 1, and 2 indicating no seat belt required, primary driver seatbelt required, and secondary driver seatbelt required, respectively.   
+
+-***State statistics:*** Variables statepop, unem, perc14_24, vehicmilespc. These variables indicate state population, unemployment, percentage of drivers between 14-24, vehicle mile driven in a specific year, respectively.
+
+-***Time in Years:*** variables d80 to d04. These indicate years 1980 to 2004.
+
+-***Fatalities:*** totfatrte which indicates total fatalities per 100,000 population. There also other variables that explains fatalities during night and weekend.  
+
+## Data Transformations
+
+Some of the variables in data set, such as speed limit columns, blood_level columns, and so on, have binary information indicating a value of 0 or 1. However, there are some values in said columns that have values other than 0 or 1, which indicates a change of a law mid year, in which case the value is written as a decimal, indicating what portion of the year which law was in place. We decided to take the majority of the values to circumnavigate around this issues and make model implementation and interpretation easier by keeping the columns binarized. In other words, in columns with binary values, any value above 0.5 would get a score of 1 and any value below 0.5 would get a score of zero.
+
+To be specific, the following the variables will be binarized. 
+
+-sl55, sl65, sl70, sl75, slnone, sl70plus, zerotol, gdl, bac10, bac08, perse, sl70plus, and perse
+
+Furthermore, we will rename the columns to get a better understanding of what each column signifies. We will, also, create three new columns, that improves the data set readability. These new columns will be as follows:
+
+- ***speed_limit:*** This column will revert the one-hot encoded variables sl55, sl65, sl70, sl75, slnone into a single column. 
+- ***year_of_observation:*** This column will revert the one-hot encoded variables d80 to d04. 
+- ***blood_alcohol_levels:*** This column will revert the one-hot encoded variables bac10, bac08.
+
+We will, then, drop the columns that have reverted from one-hot encoding and the columns totfatpvm, nghtfatpvm, and wkndfatpvm because they are derived $(totfat/(10*vehicmiles)$. 
+
+
+```{r, echo=FALSE, message=FALSE}
+#this code will be used to perform the processes explained above 
+
+#speed_limit
+data_sl <- subset(data, select= c(sl55, sl65,sl70, sl75,slnone,sl70plus))
+data_sl$sl65[data_sl$sl65 == 0.5 ] <- 0.4
+data_sl$sl55[data_sl$sl55 == 0.5 ] <- 0.6
+data_sl$sl70[data_sl$sl70 == 0.5 ] <- 0.6
+data_sl$sl75[data_sl$sl75 == 0.5 ] <- 0.6
+
+data_sl$sl55<-ifelse(data_sl$sl55 > "0.5", 1, 0)
+data_sl$sl65<-ifelse(data_sl$sl65 > "0.5", 1, 0)
+data_sl$sl70<-ifelse(data_sl$sl70 > "0.5", 1, 0)
+data_sl$sl75<-ifelse(data_sl$sl75 > "0.5", 1, 0)
+data_sl$slnone<-ifelse(data_sl$slnone >= "0.5", 1, 0)
+data_sl$sl70plus<-ifelse(data_sl$sl70plus >= "0.5", 1, 0)
+data_70plus <- subset(data_sl, select = c(sl70plus))
+
+data_sl <- subset(data_sl, select = -c(sl70plus))
+inds <- which(rowSums(data_sl)==0)
+data_sl$speed_limit <- toupper(names(data_sl)[max.col(data_sl)])
+data_sl$speed_limit[inds] <- NA
+data_speed_limit <- cbind(data_sl, data_70plus)
+data1 <- subset(data, select = -c(sl55, sl65, sl70, sl75, slnone, sl70plus))
+data1 <- cbind(data1, data_speed_limit)
+
+#year of observation
+data_year <- subset(data1, select= c(d80,d81,d82,d83,d84,d85,d86,d87,d88,d89,
+                                    d90,d91,d92,d93,d94,d95,d96,d97,d98,d99,
+                                    d00,d01,d02,d03,d04))
+
+inds <- which(rowSums(data_year)==0)
+data_year$year_of_observation <- toupper(names(data_year)[max.col(data_year)])
+data_year$year_of_observation[inds] <- NA
+
+data2 <- subset(data1, select = -c(d80,d81,d82,d83,d84,d85,d86,d87,d88,d89,
+                                    d90,d91,d92,d93,d94,d95,d96,d97,d98,d99,
+                                    d00,d01,d02,d03,d04))
+data2 <- cbind(data2, data_year)
+
+#blood_alcohol_levels
+data_alcohol <- subset(data2, select= c(bac08, bac10, zerotol))
+data_alcohol$bac10[data_alcohol$bac10 == "0.5" ] <- 0.6
+data_alcohol$bac08 <- ifelse(data_alcohol$bac08 > 0.5, 1, 0)
+data_alcohol$bac10 <- ifelse(data_alcohol$bac10 > 0.5, 1, 0)
+data_alcohol$zerotol <- ifelse(data_alcohol$zerotol >= 0.5, 1, 0)
+
+data_zerotol <- subset(data_alcohol, select = c(zerotol))
+data_alcohol <- subset(data_alcohol, select = -c(zerotol))
+
+inds <- which(rowSums(data_alcohol)==0)
+data_alcohol$blood_alcohol_levels <- toupper(names(data_alcohol)[max.col(data_alcohol)])
+data_alcohol$blood_alcohol_levels[inds] <- NA
+
+data_alcohol <- cbind(data_alcohol, data_zerotol)
+data_alcohol[is.na(data_alcohol)] <- 0
+data_alcohol$blood_alcohol_levels[data_alcohol$blood_alcohol_levels == "0"] <- "other"
+data3 <- subset(data2, select = -c(bac08, bac10, zerotol))
+data3 <- cbind(data3, data_alcohol)
+data3 <- subset(data2, select = -c(bac08, bac10, zerotol))
+data3 <- cbind(data3, data_alcohol)
+data_seatbelt <- subset(data3, select = c(seatbelt,sbprim, sbsecon))
+
+full_data <- data3
+#renaming columns for better readability 
+colnames(data3)[which(colnames(data3) %in%
+                        
+                        
+    c("minage","gdl", "perse", "totfat", "nghtfat", "wkndfat", "totfatpvm", "nghtfatpvm",
+      "wkndfatpvm", "statepop","totfatrte","nghtfatrte","wkndfatrte", "vehicmiles","unem",
+      "perc14_24","sbprim","sbsecon") )] <- 
+  
+    c("min_drink_age","grad_driver_license", "per_se_law", "tot_traffic_fatal",
+      "tot_night_fatal", "tot_weekend_fatal","tot_fatal_per_100_mil_miles", 
+      "night_fatal_per_100_mil_miles","weekend_fatal_per_100_mil_miles","state_population",
+      "total_fatalities_rate","night_fatalities_rate","weekend_fatalities_rate",
+      "vehicle_miles_billions","unemployement_rate","percent_popul_14_to_24",
+      "primary_seatbelt_law","secondary_seatbelt_law")
+data3$grad_driver_license <- ifelse(data3$grad_driver_license >= 0.5, 1, 0)
+
+#binarizing per_se_law
+data3$per_se_law <- ifelse(data3$per_se_law >= 0.5,1,0)
+
+
+#only picking up columns we need 
+
+data4 <- subset(data3, select = c(year, state, seatbelt,min_drink_age, grad_driver_license,
+                                  per_se_law,tot_traffic_fatal,tot_night_fatal,
+                                  tot_weekend_fatal,total_fatalities_rate,night_fatalities_rate,
+                                  weekend_fatalities_rate,
+                                  state_population,vehicle_miles_billions,unemployement_rate,
+                                  percent_popul_14_to_24,vehicmilespc,speed_limit,sl70plus,
+                                  year_of_observation,blood_alcohol_levels,zerotol
+                                  ))
+#names(data4)
+```
+For the state variable, the state values are numbers between 1 to 51. We will use state codes to find what number belongs to what state and assign the state abbreviations accordingly. 
+
+```{r, echo=FALSE, message=FALSE}
+#assigning proper state abbreviation to state codes. 
+state_fips <-read.table("state_code_NHTSA.xlsx - state_code.csv",sep=",", header = TRUE)
+
+data4 <- merge(x=data4, y=state_fips, by.x="state",by.y= "number") %>% dplyr::select(-state)
+colnames(data4)[which(colnames(data4) %in%c("abbreviation") )] <- c("state")
+
+#moving the state abbreviations to the beginning of the dataset. 
+#data4 %>%select(state, everything())
+final_data <- data4
+```
+## Exploratory Data Analysis 
+
+First, let's take a look at the histogram of fatality variables. As we can see in the boxplots of all the variables are skewed to the left. A log transformation may help normalize the data. 
+
+```{r, echo=FALSE,warning=FALSE, message=FALSE, fig.height=10, fig.width=15}
+histogram = geom_histogram(aes(y=..count..), 
+                 fill = "blue", 
+                 colour = "black", bins = 30)
+theme = theme(plot.title = element_text(lineheight = 1, face = "bold")) 
+
+p1  = ggplot(final_data, aes(x = tot_traffic_fatal)) +
+  scale_x_continuous(name ="Total_fatalies") + histogram + theme  
+p2  = ggplot(final_data, aes(x = tot_night_fatal)) + 
+  scale_x_continuous(name ="Night_fatalities") + histogram + theme
+p3  = ggplot(final_data, aes(x = tot_weekend_fatal)) + 
+  scale_x_continuous(name ="Weekend_fatalities") + histogram + theme + theme
+p4  = ggplot(final_data, aes(x = total_fatalities_rate)) + 
+  scale_x_continuous(name ="Total_fatalities_rate_per_100,000") + histogram + theme + theme
+p5  = ggplot(final_data, aes(x = night_fatalities_rate)) + 
+  scale_x_continuous(name ="Night_fatalities_rate_per_100,000") + histogram + theme + theme
+p6  = ggplot(final_data, aes(x = weekend_fatalities_rate)) + 
+  scale_x_continuous(name ="Weekend_fatalities_rate_per_100,000") + histogram + theme 
+grid.arrange(p1, p2, p3, p4, p5, p6, nrow = 2, ncol = 3, top = quote("Traffic Fatalities Histogram"))
+
+```
+
+```{r, echo=FALSE,warning=FALSE, message=FALSE, fig.height=10, fig.width=15}
+histogram = geom_histogram(aes(y=..count..), 
+                 fill = "blue", 
+                 colour = "black", bins = 30)
+theme = theme(plot.title = element_text(lineheight = 1, face = "bold")) 
+
+p1  = ggplot(final_data, aes(x = log(tot_traffic_fatal))) +
+  scale_x_continuous(name ="Total_fatalies") + histogram + theme  
+p2  = ggplot(final_data, aes(x = log(tot_night_fatal))) +
+  scale_x_continuous(name ="Night_fatalities") + histogram + theme
+p3  = ggplot(final_data, aes(x = log(tot_weekend_fatal))) +
+  scale_x_continuous(name ="Weekend_fatalities") + histogram + theme + theme
+p4  = ggplot(final_data, aes(x = log(total_fatalities_rate))) +
+  scale_x_continuous(name ="Total_fatalities_rate_per_100,000") + histogram + theme + theme
+p5  = ggplot(final_data, aes(x = log(night_fatalities_rate))) +
+  scale_x_continuous(name ="Night_fatalities_rate_per_100,000") + histogram + theme + theme
+p6  = ggplot(final_data, aes(x = (weekend_fatalities_rate))) + 
+  scale_x_continuous(name ="Weekend_fatalities_rate_per_100,000") + histogram + theme 
+grid.arrange(p1, p2, p3, p4, p5, p6, nrow = 2, ncol = 3, top = quote("Traffic Fatalities Histogram: \nlog transformed"))
+
+```
+
+Looks like the log transformation did help normalize all the fatality variables. We can see that the nightly fatality rates is slightly higher than the weekend. Next, let's look into the other continuous variables. It appears that some of variables are right skewed again. Log transformation might help normalize the distribution. The graphs below shows log transformed graphs. 
+
+
+```{r, echo=FALSE,warning=FALSE, message=FALSE, fig.height=10, fig.width=15}
+histogram = geom_histogram(aes(y=..count..), 
+                 fill = "blue", 
+                 colour = "black", bins = 30)
+theme = theme(plot.title = element_text(lineheight = 1, face = "bold")) 
+
+p1  = ggplot(final_data, aes(x = log(vehicle_miles_billions))) +
+  scale_x_continuous(name ="Vehicle miles driven, billions") + histogram + theme  
+p2  = ggplot(final_data, aes(x = log(unemployement_rate))) +
+  scale_x_continuous(name ="Unemployement Rate") + histogram + theme
+p3  = ggplot(final_data, aes(x = log(percent_popul_14_to_24))) +
+  scale_x_continuous(name ="14-24 old, popluation") + histogram + theme + theme
+p4  = ggplot(final_data, aes(x = log(state_population))) +
+  scale_x_continuous(name ="State Population") + histogram + theme + theme
+p5  = ggplot(final_data, aes(x = log(vehicmilespc))) +
+  scale_x_continuous(name ="Number of miles per capita") + histogram + theme + theme
+grid.arrange(p1, p2, p3, p4, p5, nrow = 2, ncol = 3, top = quote("Continous variables box plots: \nlog transformed"))
+
+```
+
+Next, let's check for heterogeneity of the fatality rate. It appears that differnet states have different fatality rates. The variance also differs across the states, though some states do have higher variance. Lowest fatalities rate state is Rhode Island(RI) and highest fatalities rate state is Wyoming(WY).
+
+```{r,warning=FALSE, echo=FALSE, fig.height=6, fig.width=12}
+final_data %>%
+  group_by(state) %>%
+  ggplot(aes(x = reorder(state,total_fatalities_rate), y = total_fatalities_rate, fill = "blue")) +
+  geom_boxplot() +
+  labs(x = "States",  y = "Fatality rate") + theme(legend.position = "none")
+
+```
+
+Next, let's look how the fatality rates differs across time in each state. As we can see, most states' fatality rates go down over time, a few state seems to have relatively flat fatalities rate over time, such as KY and AL. And some states have an increase in fatalities rate over time. 
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE, fig.height=4, fig.width=10}
+final_data %>% ggplot(aes(x = year, y = total_fatalities_rate)) + geom_point() + geom_smooth(method = "lm") +
+facet_wrap(~state, scales = "free") + ggtitle("Total Fatality Rate by year: 1980-2004") +
+theme(plot.title = element_text(lineheight = 0.8, face = "bold"),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) 
+
+```
+As you can see in the graph above, the y axis scales are not the same across states. In this next graphs, let's scale the y-axis and let's see if we can find new insight.Looks like scaling the y-axis doesn't really tell us any more information except that most states fatalitities rate flattens and/or decreases. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, fig.height=5, fig.width=7}
+xyplot(total_fatalities_rate~year | state, data=final_data,
+prepanel = function(x, y) prepanel.loess(x, y, family="gaussian"),
+main="Total Fatality Rate by year: 1980-2004 with Scaled y-axis",
+xlab = "Year", ylab = "Fatality Rate per 100,000 Population",
+panel = function(x, y) {
+panel.xyplot(x, y)
+panel.loess(x,y, family="gaussian") },
+as.table=T,
+type = c("p", "smooth"), col.line = "darkorange", lwd = 3)
+
+```
+Next, let's take a look at the fatalities rate of each state as time passes by, but all in the same graph. See if anything stands out. We can immediately see that some states have much higher fatality rates across than the rest. Most states seems to have very similar fatalities rates. 
+```{r, echo=FALSE}
+# Plots fatality rate by state, grouped by year
+conditional_plot_1 = function(data, plotvar, condvar, title, x_title, y_title) {
+g <- ggplot(final_data, aes(as.factor(condvar), plotvar))
+final_plot <- g + geom_boxplot() +
+geom_jitter(width = 0.2) +
+ggtitle(title) + xlab(x_title) + ylab(y_title)
+
+#guides(colour=guide_legend(title=color_title))
+return (final_plot)
+}
+
+
+# Plots fatality rate by year, grouped by state
+conditional_plot_2 = function(data, plotvar, condvar, title, x_title,
+y_title, color_var, color_title) {
+g <- ggplot(data, aes(as.factor(condvar), plotvar))
+final_plot <- g + geom_boxplot() +
+geom_jitter(width = 0.2, aes(colour=as.factor(color_var))) +
+ggtitle(title) + xlab(x_title) + ylab(y_title) +
+guides(colour=guide_legend(title=color_title))
+return (final_plot)
+}
+
+
+# Plots fatality rate by year, grouped by state (no boxplot + lines)
+conditional_plot_3 = function(data, plotvar, condvar, title, x_title,
+y_title, color_var, color_title) {
+g <- ggplot(data, aes(condvar, plotvar, colour=as.factor(color_var)))
+final_plot <- g + geom_line() +
+geom_point() +
+ggtitle(title) + xlab(x_title) + ylab(y_title) +
+guides(colour=guide_legend(title=color_title))
+return (final_plot)
+}
+
+
+# conditional_plot_2(final_data, final_data$tot_traffic_fatal, final_data$year,
+# "Total Fatality Rate by year", "Years",
+# "Total Fatality Rate", final_data$state, "States")
+```
+
+```{r, echo = FALSE, fig.height=5, fig.width=5}
+conditional_plot_3(final_data, final_data$tot_traffic_fatal, final_data$year,
+"Total Fatality Rate by year", "Years",
+"Total Fatality Rate", final_data$state, "States")
+
+```
+Next, let's try to see if there are any interesting insights in fatalities across states but focusing on the year variable. As we can see in the graph, the fatalites rates seem be higher across all states between 1980-1985 and seem to be lower across all states in 2000 and onwards.
+```{r, fig.width= 12, fig.height=5, echo=FALSE}
+conditional_plot_2(final_data, final_data$total_fatalities_rate, final_data$state,
+"Total Fatality Rate by State", "State",
+"Total Fatality Rate", final_data$year, "Years")
+
+```
+Next, let's see the average fatalities across all states from 1980 and 2004. As we can see, it appears that the Wyoming and New Mexico have the highest average fatality rates in the nation. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE, fig.height=5, fig.width=5}
+
+state_avg <- final_data %>% group_by(state) %>% summarise(avg_tot_fatal_rate=mean(total_fatalities_rate),
+.groups = 'drop')
+
+year_avg <- final_data %>% group_by(year) %>% summarise(avg_tot_fatal_rate = mean(total_fatalities_rate),
+                                                  avg_weekend_fatal_rate     = mean(weekend_fatalities_rate),
+                                                  avg_night_fatal_rate     = mean(night_fatalities_rate))
+#head(data.frame(state_avg))
+
+theme1 <- theme(plot.title = element_text(hjust = 0.5, size=10),
+axis.title.x = element_text(size = 10),
+axis.title.y = element_text(size = 10),
+legend.title = element_text(size = 10))
+
+fatrate_trend.plot <- ggplot(data=year_avg, aes(x=year)) +
+geom_line(aes(y=avg_tot_fatal_rate, color="Total fatality rate"))+
+geom_line(aes(y=avg_weekend_fatal_rate, color="Weekend ratality rate"))+
+geom_line(aes(y=avg_night_fatal_rate, color ="Night fatality rate"))+
+ggtitle("Average Fatality Rate by Year") +
+xlab('Year') + ylab('Fatality per 100,000')+ theme1
+
+usmap.plot <- plot_usmap(data = state_avg, values="avg_tot_fatal_rate", color = "blue", labels=FALSE) + scale_fill_continuous(name="Per 100,000", low="white", high="navy") +
+theme(legend.position = "right") +
+ggtitle("Average Fatality Rate from 1980 to 2004 by State")
+#grid.arrange(usmap.plot, fatrate_trend.plot, nrow = 2)
+usmap.plot
+```
+Let's also look at the average fatalities rate for the three fatality variables across time. It does appear all the average fatality rates are indeed trending down as time passes. 
+```{r, echo = FALSE, fig.height=3, fig.width=5}
+plt_fatrate_trend <- ggplot(data=year_avg, aes(x=year)) +
+geom_line(aes(y=avg_tot_fatal_rate, color="Total fatality rate"))+
+geom_line(aes(y=avg_weekend_fatal_rate, color="Weekend ratality rate"))+
+geom_line(aes(y=avg_night_fatal_rate, color ="Night fatality rate"))+
+ggtitle("Average Fatality Rate by Year") +
+xlab('Year') + ylab('Fatality per 100,000')+ theme1
+plt_fatrate_trend
+```
+
+Now, let's shift the focus on continues variables. We will look at the scatter Plot Matrix for the continuous variables including total fatalities rate variables and see if anything stands out. We decided to have the variables in a log format since from the histogram analysis earlier, we had seen that a log transformation was beneficial. As we can see, the log of fatalities rate variable does has negative correlations with log of state population and log vehicle miles driven and a negative correlation with log of unemployment rate.  Vehicle miles driven and state population seems to have a linear relationship with a very high correlation. 
+
+
+```{r, message=FALSE, warning=FALSE, fig.height=5, fig.width=10, echo=FALSE}
+
+log_final_data <- final_data
+log_final_data <- log_final_data %>% 
+  mutate(log_fatalities_rate = log(total_fatalities_rate),
+         log_state_population = log(state_population),
+         log_vehicle_miles = log(vehicle_miles_billions),
+         log_unemployement_rate = log(unemployement_rate))
+         
+
+correlation_data <- log_final_data %>%
+  select(c(log_fatalities_rate,
+           log_state_population,log_vehicle_miles,log_unemployement_rate))
+ 
+#scatterplotMatrix(correlation_data, main = "Scatterplot matrix between continous variable")
+
+
+ggpairs(correlation_data)
+
+```
+
+Finally, we will use the original data set to take a look at blood alcohol laws, driving licence education, seat belt laws, speed limits above 70 mph, and minimum drinking age law. As we can see, the as time passes by, more states have become stricter about seat belt laws and blood alcohol laws. Also zero tolerance law, gdl and perse laws have become more prevalent in states as well as time has passed by. Interestingly, it appears that around 1987, minimum drinking age was changed to 21 across all states. Speed limit of 70+ mph has also become prevalent across states. 
+
+```{r, message=FALSE, warning=FALSE, echo=FALSE}
+
+full_data$minage <- round(full_data$minage)
+drinking_age_df <- with(full_data, table(minage, year)) %>% as.data.frame()
+drinking_age_df$year <- as.numeric(drinking_age_df$year) + 1979
+group_data <- full_data %>% group_by(year) %>% summarise(sum(sl55), sum(sl65),
+sum(sl70), sum(sl75), sum(slnone), sum(sl70plus), sum(seatbelt), sum(zerotol),
+sum(gdl), sum(bac08), sum(bac10), sum(perse), sum(sbprim), sum(sbsecon)) %>%
+data.frame()
+colnames(group_data) <- c("year", "sl55", "sl65", "sl70", "sl75", "slnone",
+"sl70plus", "seatbelt", "zerotol", "gdl", "bac08", "bac10", "perse",
+"sbprim", "sbsecon")
+grouped_data_tidy <- group_data %>% gather("regulation", "value", 2:15)
+
+p1 <- subset(grouped_data_tidy, regulation %in% c("bac08", "bac10")) %>%
+ggplot(aes(x = year, y = value, color = regulation)) + geom_line() +
+ggtitle("# States with Blood Alchool Limit Laws") +
+  theme(plot.title = element_text(size=8))
+
+p2 <- subset(grouped_data_tidy, regulation %in% c("gdl", "perse", "zerotol")) %>%
+ggplot(aes(x = year, y = value, color = regulation)) + geom_line() +
+ggtitle("# States with Driving License Education") +
+  theme(plot.title = element_text(size=8))
+
+p3 <- subset(grouped_data_tidy, regulation %in% c("sbprim", "sbsecon")) %>%
+ggplot(aes(x = year, y = value, color = regulation)) + geom_line() +
+ggtitle("# States with Primary and Secondary Seatbelt Laws") +
+  theme(plot.title = element_text(size=8))
+
+p4 <- subset(grouped_data_tidy, regulation == "sl70plus") %>% ggplot(aes(x = year,
+y = value, color = regulation)) + geom_line() + ggtitle("# States with speed limit of 70+ mph") +
+  theme(plot.title = element_text(size=8))
+                                                        
+p5 <- drinking_age_df %>% ggplot(aes(x = year, y = Freq, group = minage,
+color = minage)) + geom_line() + ggtitle("# States with Minimum Drinking Ages") +
+theme(plot.title = element_text(size=8))
+
+grid.arrange(p1, p2, p3, p4, p5, ncol = 2)
+```
+
+# (15 points) Preliminary Model
+
+Estimate a linear regression model of *totfatrte* on a set of dummy variables for the years 1981 through 2004 and interpret what you observe. In this section, you should address the following tasks: 
+
+- Why is fitting a linear model a sensible starting place? 
+- What does this model explain, and what do you find in this model? 
+- Did driving become safer over this period? Please provide a detailed explanation.
+- What, if any, are the limitation of this model. In answering this, please consider **at least**: 
+    - Are the parameter estimates reliable, unbiased estimates of the truth? Or, are they biased due to the way that the data is structured?
+    - Are the uncertainty estimate reliable, unbiased estimates of sampling based variability? Or, are they biased due to the way that the data is structured? 
+    
+* a time based linear model or pooled OLS is a good starting point because as an exploratory analysis, it gives some information whether there is a time trend to the data. If there is a time trend, we will need to consider controlling for time when estimating effect of other treatments. 
+
+
+```{r}
+linear.mod <- lm(total_fatalities_rate ~ year, data = final_data)
+summary(linear.mod)
+```
+
+* The linear model explains that there is a negative correlation between fatality rate and time (year), meaning as years increased there were less car accidental fatality. However, the model doesn't explain why there was a less fatality, only that there is negative time trend and time by itself cannot cause fatality to drop. To better understand the cause of less fatality over time, we need to control for other omitted variable such as regulations, alcohol consumption and unemployment rate and individual state difference. If we still observe significant negative time trend after controlling for these omitted variable bias, then we know there is something else outside of the data that is causing the fatality rate to drop. 
+
+```{r, echo=FALSE}
+final_data%>%
+  ggplot(aes(x = year, y = total_fatalities_rate)) +
+  geom_point(aes(color = state))+
+  geom_line(data=broom::augment(linear.mod),
+            aes(x = year, y =.fitted),
+            color = "blue", lty="dashed", size = 1)+
+  theme(legend.position = "none") +labs(x = "year",
+       y = "Fatality rate")
+```
+
+* Above is all of the state's observation with the best fit linear line. The color on the graph represent each state. As we can see, The main problem is that in this linear model we do not observe ($state_i$), which is constant over time varies across individuals. Hence if we estimate the model in levels using OLS then $state_i$ will go into the error term: $\epsilon_{it}= state_i + u_{it}$.
+
+* If $state_i$ is correlated with $year$, then putting $state_i$ in the error term can cause serious problems. This, of course, is **an omitted variable problem**. For this single regressor model:
+
+$$plim \widehat{\beta_{ols}} = \beta+\frac{cov(year,state_i)}{\sigma^2_x}$$
+
+* which shows that the OLS estimator is inconsistent unless $cov(year, state_i) = 0$. In the graph above, we do see covariance between state and year. Therefore our point estimate is both **inconsistent** and **biased**. 
+
+* Even if $state_i$ is uncorrelated with $year$, then $state_i$ is just another unobserved factor making up the residual, then, this OLS will not be efficient (smallest variance) because the error term $\epsilon_{it}$ is serially correlated. Therefore the standard formula for calculating the standard errors is wrong. As a result, our uncertainty estimate (standard errors) is also incorrect. 
+
+# (15 points) Expanded Model 
+
+Expand the **Preliminary Model** by adding variables related to the following concepts: 
+
+- Blood alcohol levels 
+- Per se laws
+- Primary seat belt laws (Note that if a law was enacted sometime within a year the fraction of the year is recorded in place of the zero-one indicator.)
+- Secondary seat belt laws 
+- Speed limits faster than 70 
+- Graduated drivers licenses 
+- Percent of the population between 14 and 24 years old
+- Unemployment rate
+- Vehicle miles driven per capita. 
+
+If it is appropriate, include transformations of these variables. Please carefully explain carefully your rationale, which should be based on your EDA, behind any transformation you made. If no transformation is made, explain why transformation is not needed. 
+
+- How are the blood alcohol variables defined? Interpret the coefficients that you estimate for this concept. 
+- Do *per se laws* have a negative effect on the fatality rate? 
+- Does having a primary seat belt law? 
+
+
+```{r, echo=FALSE}
+#names(final_data)
+```
+
+* In EDA section, we saw some of the variables are quite skewed. Therefore, in this expanded linear model, we decided to log some skewed variables to make them more normally distributed. This helps with the first assumption of a linear model that says that explanatory and dependent variables are linear, because skewed data are less linear. 
+* We also factor the blood_alcohol_levels wit BAC08 (0.1%) is the baseline, as a result BAC08 (0.08%) and other(0.00%) becomes dummy variables.
+
+
+```{r}
+final_data$blood_alcohol_levels <- relevel(factor(final_data$blood_alcohol_levels), ref = "BAC10")
+linear.mod.exp <- lm(log(total_fatalities_rate) ~ year + as.factor(blood_alcohol_levels) + per_se_law +  as.factor(seatbelt)
+                        + sl70plus + grad_driver_license + percent_popul_14_to_24
+                        + log(unemployement_rate) + log(vehicmilespc)
+                     , data = final_data)
+summary(linear.mod.exp)
+```
+
+* As expected the time effect has dropped significantly after controlling other factors. However it is still statistically significant, which means we most likely still need it in the model because it serve as a control for factors that is not observed in the model 
+* In terms of blood alcohol level, when compared to the baseline alcohol level 0.1%, there is no statistical significant relationship between more strict alcohol level laws and fatality rate. This is counter intuitive, which suggests that the current model specification is incorrect. A fixed effect model may be more appropriate.
+* As expected, **per se** law do have a statistically significant negative effect on fatality rate. 
+* Compared to baseline of no seat belt law, both primary and secondary seat belt law requirement have no statistical significant relationship to fatality rate. This is also counter intuitive, which suggests that the current model specification is incorrect. A fixed effect model may be more appropriate.
+* Based on these counter intuitive coefficients, we think a normal linear model will not work here. Rather we need a state-level and time-level fixed effects model
+
+# (15 points) State-Level Fixed Effects 
+
+Re-estimate the **Expanded Model** using fixed effects at the state level. 
+
+- What do you estimate for coefficients on the blood alcohol variables? How do the coefficients on the blood alcohol variables change, if at all? 
+- What do you estimate for coefficients on per se laws? How do the coefficients on per se laws change, if at all? 
+- What do you estimate for coefficients on primary seat-belt laws? How do the coefficients on primary seatbelt laws change, if at all? 
+
+Which set of estimates do you think is more reliable? Why do you think this? 
+
+- What assumptions are needed in each of these models?  
+- Are these assumptions reasonable in the current context?
+ 
+
+```{r}
+## convert data frame to pdata.frame
+pfatalities <- pdata.frame(final_data, index=c("state", "year")) 
+pdim(pfatalities)
+```
+
+```{r}
+fixed_model  <- plm(log(total_fatalities_rate) ~ as.factor(blood_alcohol_levels) + per_se_law +  as.factor(seatbelt)
+                        + sl70plus + grad_driver_license + percent_popul_14_to_24
+                        + log(unemployement_rate) + log(vehicmilespc) + year
+                    , data = pfatalities, index = c("state", "year"), effect = "individual", model = "within")
+summary(fixed_model)
+```
+
+* The absolute value of blood alcohol level shrunk, and it is still statistically insignificant. This suggest having more strict blood alcohol level (less than 0.1%) has no effect on fatality rate. 
+* The coefficient of per se law becomes more negative and more statistically significant. This suggest after controlling for state difference per se law actually have a significant negative effect on fatality rate.
+* The primary seat belt law went from having no statistical significant effect to having a statistically significant negative effect on the fatality after controlling for state level difference. 
+* We trust the fixed effect model more than the linear model because we know from both EDA and earlier model's diagnostic graph that state do perform differently. Therefore we should control for their difference. 
+
+
+### model assumptions
+For linear models have the following assumption:
+1- **Linearity**: the model is linear in parameters
+
+2- **i.i.d.** : The observations are independent across individuals but not necessarily across time. This is guaranteed by random sampling of individuals.
+
+3- **Indentifiability**: the regressors, including a constant, are not perfectly collinear, and all regressors (but the constant) have non-zero variance and not too many extreme values.
+
+4- $x_it$ is uncorrelated with idiosyncratic error term $u_{it}$ and individual-specific effect $\gamma_i$
+
+a)  $$E(u_{it} x_{it}) = 0$$
+
+b)  $$E(x_{it}, \gamma_i) = 0$$
+
+While first 3 assumptions are reasonable, the 4th assumption is violated, because we know individual (state) is correlated with $x_it$, which are regulations in our case. 
+
+For fixed effect model, the first three assumptions are the same, but 4th assumption, see below is different. 
+
+4- **Zero conditional means (strict exogeneity)**
+
+$E(x_{it},u_{is}) =0$ for $s=1,2,3,....,T$
+
+If the above assumptions holds, we can use the Fixed Effects (FE) estimators to obtain consistent estimates of $\beta$. However we cannot be certain that feedback from past $u_{is}$ has no effect on the current $x_{it}$. One implication of this is that estimators will not yield consistent estimates if $x_{it}$ depends on lagged dependent variables $(y_{it-1}, y_{it-2},....)$ as in the case of a VAR model.
+
+
+# (10 points) Consider a Random Effects Model 
+
+Instead of estimating a fixed effects model, should you have estimated a random effects model?
+
+- Please state the assumptions of a random effects model, and evaluate whether these assumptions are met in the data. 
+- If the assumptions are, in fact, met in the data, then estimate a random effects model and interpret the coefficients of this model. Comment on how, if at all, the estimates from this model have changed compared to the fixed effects model. 
+- If the assumptions are **not** met, then do not estimate the data. But, also comment on what the consequences would be if you were to *inappropriately* estimate a random effects model. Would your coefficient estimates be biased or not? Would your standard error estimates be biased or not? Or, would there be some other problem that might arise?
+
+* The following are the assumptions of a random effects model according to "Introductory Econometrics" by Wooldridge:
+
+1) There are no perfect linear relationships among the explanatory variables.
+2) For each $t$, the expected value of the idiosyncratic error given the explanatory variables in all time periods
+and the unobserved effect is zero: $E(u_{it} | X_i,a_i) =0$.
+3) The expected value of $a_i$, given all explanatory variables, is constant: $E(a_{i} | X_i) = \beta_0$.
+4) $Var(u_{it} | X_i,a_i) = Var(u_{it}) = \sigma_u^2$ for all $t = 1, ..., T$.
+5) The variance of $a_i$, given all explanatory variables, is constant: $Var(a_{i} | X_i) = \sigma_a^2$.
+6) For all $t \neq s$, the idiosyncratic errors are uncorrelated (conditional on all explanatory variables and $a_i$): $Cov(u_{it}, u_{is}| X_i, a_i) = 0$.
+
+Assumption 3 is likely not satisfied, as there are unobserved time-constant effects correlated with the explanatory variables. 
+A few examples of the violation of this assumption are: 
+1) Oil producing states like Texas have lower gas prices, which are likely correlated to more miles driven per capita.
+2) Whether a state has more rural or urban areas might affect appropriate speed limit laws. For example, a 70 m.p.h. limit
+in a highly urban state might be too lax, while it might be acceptable for states with more rural roads and highways.
+3) Public perception of drinking in a state might be correlated with the implementation of DUI laws: states where the 
+majority of the population view drinking favorably might foster the implementation of DUI laws.
+
+The violation of the assumption of unobserved effects being uncorrelated explanatory variables leads to the widely known
+omitted variable problem, which results in biased coefficient estimates. The direction of correlation between the 
+unobserved effects and the explanatory variables will result in either underestimating or overestimating the coefficients of the dependent variables. 
+The tradeoff with respect to the fixed-effect model is efficiency, producing smaller standard errors.
+
+
+```{r Fit a Random Effects Model}
+
+random_effects_model  <- plm(log(total_fatalities_rate) ~ as.factor(blood_alcohol_levels) + per_se_law +  as.factor(seatbelt)
+                        + sl70plus + grad_driver_license + percent_popul_14_to_24
+                        + log(unemployement_rate) + log(vehicmilespc) + year
+                    , data = pfatalities, index = c("state", "year"), effect = "individual", model = "random")
+
+```
+
+Below we run a Hausman test to verify analytically whether the random effects model 
+is applicable to the data.
+
+```{r}
+phtest(fixed_model, random_effects_model)
+```
+Using the Hausman test, we can reject the null hypothesis that the random
+effects model is appropriate, and thus we should use the fixed effects model
+instead.
+
+# (10 points) Model Forecasts 
+
+The COVID-19 pandemic dramatically changed patterns of driving. Find data (and include this data in your analysis, here) that includes some measure of vehicle miles driven in the US. Your data should at least cover the period from January 2018 to as current as possible. With this data, produce the following statements: 
+
+- Comparing monthly miles driven in 2018 to the same months during the pandemic: 
+  - What month demonstrated the largest decrease in driving? How much, in percentage terms, lower was this driving? 
+  - What month demonstrated the largest increase in driving? How much, in percentage terms, higher was this driving? 
+  
+Now, use these changes in driving to make forecasts from your models. 
+
+- Suppose that the number of miles driven per capita, increased by as much as the COVID boom. Using the FE estimates, what would the consequences be on the number of traffic fatalities? Please interpret the estimate.
+- Suppose that the number of miles driven per capita, decreased by as much as the COVID bust. Using the FE estimates, what would the consequences be on the number of traffic fatalities? Please interpret the estimate.
+
+We have obtained vehicle miles driven per month from January 2018 to May 2022, 
+from the U.S. Federal Highway Administration [https://fred.stlouisfed.org/series/TRFVOLUSM227NFWA].
+
+```{r Miles driven from 2018 to 2022}
+
+miles_driven_2018_2022 = read.csv("./data/TRFVOLUSM227NFWA.csv")
+
+miles_driven_2018_2022 = miles_driven_2018_2022 %>% 
+  mutate(year = year(DATE),
+         month = month(DATE))
+
+miles_driven_2018 = miles_driven_2018_2022[miles_driven_2018_2022$year == 2018,]
+miles_driven_2020 = miles_driven_2018_2022[miles_driven_2018_2022$year == 2020,]
+miles_driven_2021 = miles_driven_2018_2022[miles_driven_2018_2022$year == 2021,]
+
+miles_driven_diff = data.frame(month = miles_driven_2018$month,
+                               miles_2018 = miles_driven_2018$TRFVOLUSM227NFWA,
+                               miles_2020 = miles_driven_2020$TRFVOLUSM227NFWA,
+                               miles_2021 = miles_driven_2021$TRFVOLUSM227NFWA)
+
+miles_driven_diff = miles_driven_diff %>%
+  mutate(diff_2020 = miles_2020 - miles_2018,
+         diff_2021 = miles_2021 - miles_2018)
+
+miles_driven_diff
+```
+
+We compare the difference in driven miles between 2018 and March 2020 to December 2020, and 2018 with 2021, 
+which corresponds to the strongest years of the pandemic (2020-2021). We exclude the months of 
+January and February 2020, as the official declaration of Covid-19 as a pandemic was announced
+by the WHO in March 11th, 2020 (https://pubmed.ncbi.nlm.nih.gov/32191675/#:~:text=The%20World%20Health%20Organization%20(WHO,a%20global%20pandemic%20(1).)
+
+The largest decrease in driving during the pandemic occurred in April 2020, where there
+was a decrease of 107,510 miles in comparison with April 2018. This constitutes a
+decrease of 39.07% ($(167617 - 275127) / 275127 = -0.3907$).
+
+The largest increase in driving during the pandemic occurred in September 2021, where there
+was an increase of 10,564	miles in comparison with September 2018. This constitutes an
+increase of 3.8% ($(277998 - 267434) / 267434 = 0.0395$).
+
+Recall that the coefficient of the log of the vehicle miles driven per capita in 
+our fixed effect model is $\beta=0.677$. Since both the dependent and independent
+variable are log transformed, all else being equal, a one percent increase in miles driven
+corresponds to a $100 *(1.01^{0.677} - 1) = 0.68$ percent increase in fatalities.
+
+Therefore, during the boom in driving in Covid, in September 2021, the 3.95% increase
+in miles driven would have resulted in a $3.95*0.68=2.69$% increase in fatalities,
+all else being equal, with respect to the number of fatalities in the baseline of
+September 2018.
+
+In contrast, during the bust in driving during Covid, in April 2020, the 39.07% decrease
+in miles driven would have resulted in a $39.07*0.68=26.56$% decrease in fatalities,
+all else being equal, with respect to the number of fatalities in the baseline of April 2018.
+This is a considerable effect in terms of saving lives, but unfortunately at the large cost
+of the millions of lives lost due to the pandemic itself.
+
+# (5 points) Evaluate Error 
+
+If there were serial correlation or heteroskedasticity in the idiosyncratic errors of the model, what would be the consequences on the estimators and their standard errors? Is there any serial correlation or heteroskedasticity?
+
+Heteroskedasticity in the errors violates one of the assumptions of the OLS regression.
+In the presence of heteroskedasticity the estimates will be less precise and the 
+standard errors are smaller than they should be, which might result in spurious
+statistical significance of coefficients.
+
+Serial correlation in idiosyncratic errors will also bias the standard errors and will 
+produce less efficient estimates.
+
+We perform a Breusch-Pagan test to determine if there's heteroskedasticity in the
+Fixed Effects model.
+
+```{r Test for heteroskedasticity}
+
+pcdtest(fixed_model, test = "lm")
+
+```
+
+We reject the null hypothesis of homoskedasticity in the fixed effects model.
+
+We now perform a Durbin-Watson test to determine if there's serial correlation in the errors of the fixed effects Model.
+
+```{r Test for serial correlation}
+
+pdwtest(fixed_model)
+
+```
+
+The test rejects the null hypothesis of no serial correlation in the idiosyncratic errors.

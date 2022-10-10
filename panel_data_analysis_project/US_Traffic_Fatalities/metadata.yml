@@ -1,0 +1,15 @@
+---
+:id: 130098601
+:submitters:
+- :name: Oswaldo Olivo
+  :email: oswaldo@ischool.berkeley.edu
+- :name: George Jiang
+  :email: george.jiang@ischool.berkeley.edu
+- :name: Ahmad Azizi
+  :email: aazizi@ischool.berkeley.edu
+:created_at: !ruby/object:ActiveSupport::TimeWithZone
+  utc: 2022-08-04 18:52:45.879926000 Z
+  zone: !ruby/object:ActiveSupport::TimeZone
+    name: America/Los_Angeles
+  time: 2022-08-04 11:52:45.879926000 Z
+:status: processed
